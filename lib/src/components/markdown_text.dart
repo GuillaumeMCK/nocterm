@@ -62,6 +62,7 @@ class MarkdownText extends StatelessComponent {
     final effectiveStyleSheet = styleSheet ?? MarkdownStyleSheet.terminal();
     final document = md.Document(
       extensionSet: md.ExtensionSet.gitHubFlavored,
+      encodeHtml: false,
     );
     final nodes = document.parse(data);
 

@@ -3,6 +3,7 @@ import 'package:nocterm/src/framework/terminal_canvas.dart';
 import 'package:nocterm/src/painting/inline_span.dart';
 
 import '../text/text_layout_engine.dart';
+import '../utils/unicode_width.dart';
 export '../text/text_layout_engine.dart' show TextOverflow, TextAlign;
 
 /// Render object for displaying rich text (text with multiple styles).
@@ -246,9 +247,9 @@ class RenderParagraph extends RenderObject {
           segment.text,
           style: segment.style,
         );
-        // Move x position by the width of the segment text
-        // Note: This assumes monospace font where each character is 1 unit wide
-        currentX += segment.text.length;
+        // Move x position by the actual display width of the segment text
+        // This accounts for wide characters like emojis and CJK characters
+        currentX += UnicodeWidth.stringWidth(segment.text);
       }
     }
   }
