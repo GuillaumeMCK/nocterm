@@ -372,6 +372,7 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
         _lazy = lazy,
         _hasSeparators = hasSeparators {
     _controller.addListener(_handleScrollUpdate);
+    _controller.attach(this);
   }
 
   _ListViewportElement? _element;
@@ -399,8 +400,10 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
   set controller(ScrollController value) {
     if (_controller != value) {
       _controller.removeListener(_handleScrollUpdate);
+      _controller.detach(this);
       _controller = value;
       _controller.addListener(_handleScrollUpdate);
+      _controller.attach(this);
       markNeedsLayout();
     }
   }
@@ -493,6 +496,7 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
   @override
   void dispose() {
     _controller.removeListener(_handleScrollUpdate);
+    _controller.detach(this);
     super.dispose();
   }
 
@@ -830,6 +834,52 @@ class RenderListViewport extends RenderObject with ScrollableRenderObjectMixin {
     for (final child in _visibleChildren) {
       visitor(child.renderObject);
     }
+  }
+
+  /// Gets the offset and extent of an item by its index.
+  ///
+  /// Returns a record with (offset, extent) if the item is found,
+  /// or null if the item doesn't exist or hasn't been laid out yet.
+  ///
+  /// This method works in both lazy and non-lazy modes:
+  /// - In non-lazy mode, queries the _allChildren list for accurate positions
+  /// - In lazy mode, checks _visibleChildren or estimates based on itemExtent
+  (double, double)? getItemOffsetAndExtent(int index) {
+    // First check if we're in non-lazy mode and have all children
+    if (!_lazy && _allChildren.isNotEmpty) {
+      // Find the item in all children
+      for (final child in _allChildren) {
+        if (child.index == index) {
+          final extent = scrollDirection == Axis.vertical
+              ? child.renderObject.size.height
+              : child.renderObject.size.width;
+          return (child.offset, extent);
+        }
+      }
+      return null; // Item not found
+    }
+
+    // For lazy mode, check visible children first
+    for (final child in _visibleChildren) {
+      if (child.index == index) {
+        final extent = scrollDirection == Axis.vertical
+            ? child.renderObject.size.height
+            : child.renderObject.size.width;
+        return (child.offset, extent);
+      }
+    }
+
+    // If item is not visible in lazy mode, try to estimate if we have itemExtent
+    if (_lazy && itemExtent != null) {
+      // Fixed extent - we can calculate exact position
+      final offset = index * itemExtent!;
+      return (offset, itemExtent!);
+    }
+
+    // If item is not visible and we can't estimate, we need to build it
+    // This is only safe to do during layout
+    // For now, return null to indicate item position is unknown
+    return null;
   }
 }
 

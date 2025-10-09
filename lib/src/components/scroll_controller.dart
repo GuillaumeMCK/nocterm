@@ -15,6 +15,9 @@ class ScrollController extends ChangeNotifier {
   double _viewportDimension = 0.0;
   AxisDirection _axisDirection = AxisDirection.down;
 
+  /// The attached render object (used for index-based scrolling)
+  Object? _attachedRenderObject;
+
   /// The current scroll offset.
   double get offset => _offset;
 
@@ -115,6 +118,114 @@ class ScrollController extends ChangeNotifier {
   /// Scrolls to the end.
   void scrollToEnd() {
     jumpTo(maxScrollExtent);
+  }
+
+  /// Ensures that an item at the given position is visible in the viewport.
+  ///
+  /// This method scrolls the viewport only if necessary to make the item
+  /// visible. If the item is already fully visible, no scrolling occurs.
+  ///
+  /// Parameters:
+  /// - [itemOffset]: The offset of the item from the start of the scrollable content.
+  /// - [itemExtent]: The extent (height for vertical, width for horizontal) of the item.
+  ///
+  /// The method performs minimal scrolling:
+  /// - If the item is below the viewport, scrolls down to show it at the bottom.
+  /// - If the item is above the viewport, scrolls up to show it at the top.
+  /// - If the item is already fully visible, does not scroll.
+  /// - If the item is larger than the viewport, scrolls to show the start of the item.
+  void ensureVisible({
+    required double itemOffset,
+    required double itemExtent,
+  }) {
+    final itemStart = itemOffset;
+    final itemEnd = itemOffset + itemExtent;
+    final viewportStart = offset;
+    final viewportEnd = offset + viewportDimension;
+
+    // Item is fully visible - no need to scroll
+    if (itemStart >= viewportStart && itemEnd <= viewportEnd) {
+      return;
+    }
+
+    // Item is larger than viewport - show the start
+    if (itemExtent > viewportDimension) {
+      jumpTo(itemStart);
+      return;
+    }
+
+    // Item is below viewport - scroll down to show it at the bottom
+    if (itemEnd > viewportEnd) {
+      final targetOffset = itemEnd - viewportDimension;
+      jumpTo(targetOffset);
+      return;
+    }
+
+    // Item is above viewport - scroll up to show it at the top
+    if (itemStart < viewportStart) {
+      jumpTo(itemStart);
+      return;
+    }
+  }
+
+  /// Attaches a render object to this controller.
+  ///
+  /// This is called by render objects (like RenderListViewport) when they
+  /// are created with this controller. It allows the controller to query
+  /// the render object for operations like [ensureIndexVisible].
+  void attach(Object renderObject) {
+    _attachedRenderObject = renderObject;
+  }
+
+  /// Detaches a render object from this controller.
+  ///
+  /// This is called by render objects when they are disposed.
+  void detach(Object renderObject) {
+    if (_attachedRenderObject == renderObject) {
+      _attachedRenderObject = null;
+    }
+  }
+
+  /// Ensures that an item at the given index is visible in the viewport.
+  ///
+  /// This method queries the attached [RenderListViewport] to get the item's
+  /// position and then scrolls the viewport to make it visible using [ensureVisible].
+  ///
+  /// Parameters:
+  /// - [index]: The index of the item to make visible.
+  ///
+  /// If the item's position cannot be determined (e.g., the item hasn't been
+  /// laid out yet in lazy mode, or there's no attached RenderListViewport),
+  /// this method does nothing.
+  ///
+  /// Example:
+  /// ```dart
+  /// scrollController.ensureIndexVisible(index: selectedIndex);
+  /// ```
+  void ensureIndexVisible({required int index}) {
+    // Import is needed at the top of the file
+    final renderViewport = _attachedRenderObject;
+
+    if (renderViewport is! RenderListViewport) {
+      // No ListView attached or wrong type
+      return;
+    }
+
+    // Query the render object for the item's position
+    final itemInfo = renderViewport.getItemOffsetAndExtent(index);
+
+    if (itemInfo == null) {
+      // Item position unknown (not laid out yet, or doesn't exist)
+      return;
+    }
+
+    final (itemOffset, itemExtent) = itemInfo;
+
+    // Use the existing ensureVisible logic
+    ensureVisible(
+      itemOffset: itemOffset,
+      itemExtent: itemExtent,
+    );
   }
 
   @override
