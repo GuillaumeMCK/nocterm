@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'binding/terminal_binding.dart';
 
 /// Safely shut down the nocterm application with proper terminal cleanup.

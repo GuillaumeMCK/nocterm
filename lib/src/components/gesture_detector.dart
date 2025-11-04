@@ -279,34 +279,57 @@ class _RenderGestureDetector extends RenderMouseRegion {
   // Store gesture detector annotation separately from mouse region annotation
   MouseTrackerAnnotation? _gestureAnnotation;
 
+  // Track button press state to detect state transitions
+  // This is more reliable than using isMotion flag
+  bool _isLeftButtonPressed = false;
+
   @override
   MouseTrackerAnnotation? get annotation => _gestureAnnotation ?? super.annotation;
 
   void _updateGestureAnnotation() {
     _gestureAnnotation = MouseTrackerAnnotation(
       onEnter: (event) {
-        // Only handle actual button press, not motion events
-        if (!event.isMotion && event.pressed && event.button == MouseButton.left) {
-          _onPointerDown(event);
+        // When entering, sync our state with the current button state
+        // but don't trigger pointer down unless button is pressed during entry
+        if (event.button == MouseButton.left) {
+          if (event.pressed && !_isLeftButtonPressed) {
+            // Button is pressed as we enter - treat as new press
+            _isLeftButtonPressed = true;
+            _onPointerDown(event);
+          } else if (!event.pressed) {
+            // Button not pressed, ensure state is clean
+            _isLeftButtonPressed = false;
+          }
         }
       },
       onExit: (event) {
-        // Only handle actual button release, not motion events
-        if (!event.isMotion && !event.pressed && event.button == MouseButton.left) {
+        // When exiting, if button was pressed inside and is now released,
+        // we should complete the gesture
+        if (!event.pressed && _isLeftButtonPressed && event.button == MouseButton.left) {
+          _isLeftButtonPressed = false;
           _onPointerUp(event);
         }
+        // Reset state when leaving region to prevent stuck buttons
+        // This handles the case where button is still pressed when we exit
+        _isLeftButtonPressed = false;
       },
       onHover: (event) {
+        // Handle move events for gesture recognizers
         if (event.button != MouseButton.wheelUp &&
             event.button != MouseButton.wheelDown) {
           _onPointerMove(event);
         }
-        // Handle button press/release during hover
-        // Only process actual button events, not motion
-        if (!event.isMotion) {
-          if (event.pressed && event.button == MouseButton.left) {
+
+        // Detect button state transitions (pressed -> not pressed, or vice versa)
+        // This works regardless of the isMotion flag
+        if (event.button == MouseButton.left) {
+          if (event.pressed && !_isLeftButtonPressed) {
+            // Button was just pressed while hovering
+            _isLeftButtonPressed = true;
             _onPointerDown(event);
-          } else if (!event.pressed && event.button == MouseButton.left) {
+          } else if (!event.pressed && _isLeftButtonPressed) {
+            // Button was just released while hovering
+            _isLeftButtonPressed = false;
             _onPointerUp(event);
           }
         }
