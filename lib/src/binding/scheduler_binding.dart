@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:meta/meta.dart';
 import 'package:nocterm/src/binding/scheduler_phase.dart';
+import 'package:nocterm/src/foundation/performance.dart';
 import 'package:nocterm/src/framework/framework.dart';
 
 /// Signature for frame callbacks.
@@ -76,6 +77,54 @@ mixin SchedulerBinding on NoctermBinding {
       'Ensure runApp() has been called to initialize the binding.',
     );
     return _instance!;
+  }
+
+  // --- Performance Tracking ---
+
+  final List<FrameTimingCallback> _frameTimingCallbacks = [];
+  int _frameNumber = 0;
+  DateTime? _lastFrameTime;
+
+  /// Target frame duration (default: 60fps = ~16.67ms).
+  Duration targetFrameDuration = const Duration(microseconds: 16667);
+
+  /// Whether to enable frame rate limiting to prevent CPU saturation.
+  ///
+  /// When true, frames are throttled to approximately [targetFrameDuration].
+  /// When false, frames render as fast as possible (may cause 100% CPU).
+  bool enableFrameRateLimiting = true;
+
+  /// Register a callback to receive frame timing data.
+  ///
+  /// The callback is invoked after each frame completes with detailed
+  /// timing information about build, layout, and paint phases.
+  ///
+  /// Use this to detect slow frames and monitor performance:
+  /// ```dart
+  /// binding.addFrameTimingCallback((timing) {
+  ///   if (timing.isSlowFrame) {
+  ///     print('Slow frame detected: $timing');
+  ///   }
+  /// });
+  /// ```
+  void addFrameTimingCallback(FrameTimingCallback callback) {
+    _frameTimingCallbacks.add(callback);
+  }
+
+  /// Remove a frame timing callback.
+  void removeFrameTimingCallback(FrameTimingCallback callback) {
+    _frameTimingCallbacks.remove(callback);
+  }
+
+  void _reportFrameTiming(FrameTiming timing) {
+    for (final callback in List.of(_frameTimingCallbacks)) {
+      try {
+        callback(timing);
+      } catch (e, stack) {
+        // TODO: Proper error handling
+        print('Error in frame timing callback: $e\n$stack');
+      }
+    }
   }
 
   /// Current phase of frame processing.
@@ -234,15 +283,34 @@ mixin SchedulerBinding on NoctermBinding {
 
   /// Platform-specific frame scheduling implementation.
   ///
-  /// Currently uses [Timer.run] to schedule on the next event loop tick.
+  /// Schedules frames with optional frame rate limiting to prevent CPU saturation.
+  /// When [enableFrameRateLimiting] is true, enforces [targetFrameDuration] between frames.
+  ///
   /// Subclasses can override for different timing strategies (e.g., vsync).
   @protected
   void scheduleFrameImpl() {
-    Timer.run(() {
+    if (enableFrameRateLimiting && _lastFrameTime != null) {
       final now = DateTime.now();
-      final timeStamp = Duration(microseconds: now.microsecondsSinceEpoch);
-      handleBeginFrame(timeStamp);
-    });
+      final elapsed = now.difference(_lastFrameTime!);
+
+      if (elapsed < targetFrameDuration) {
+        // Too soon, delay the frame
+        final delay = targetFrameDuration - elapsed;
+        Timer(delay, () {
+          _executeFrame();
+        });
+        return;
+      }
+    }
+
+    // Execute frame immediately
+    Timer.run(_executeFrame);
+  }
+
+  void _executeFrame() {
+    _lastFrameTime = DateTime.now();
+    final timeStamp = Duration(microseconds: _lastFrameTime!.microsecondsSinceEpoch);
+    handleBeginFrame(timeStamp);
   }
 
   /// Ensures a visual update occurs.
@@ -280,6 +348,9 @@ mixin SchedulerBinding on NoctermBinding {
   /// The microtask phase allows Futures/Promises that completed during
   /// transient callbacks to execute before the build phase.
   void handleBeginFrame(Duration rawTimeStamp) {
+    _frameNumber++;
+    NoctermTimeline.startSync('Frame #$_frameNumber');
+
     _currentFrameTimeStamp = rawTimeStamp;
     _currentSystemFrameTimeStamp = rawTimeStamp;
 
@@ -288,6 +359,7 @@ mixin SchedulerBinding on NoctermBinding {
 
     try {
       // Phase 1: Transient callbacks (animations)
+      NoctermTimeline.startSync('Animate');
       _schedulerPhase = SchedulerPhase.transientCallbacks;
       final localTransientCallbacks = Map<int, _FrameCallbackEntry>.of(_transientCallbacks);
       for (final entry in localTransientCallbacks.values) {
@@ -301,6 +373,7 @@ mixin SchedulerBinding on NoctermBinding {
       }
       _transientCallbacks.clear();
       _removeCompletedCallbacks();
+      NoctermTimeline.finishSync(); // Animate
 
       // Phase 2: Microtasks
       // (These run automatically as part of the event loop)
@@ -328,11 +401,24 @@ mixin SchedulerBinding on NoctermBinding {
   void handleDrawFrame() {
     assert(_schedulerPhase == SchedulerPhase.persistentCallbacks);
 
+    final frameStart = DateTime.now();
+    int buildEnd = 0;
+    int layoutEnd = 0;
+    int paintEnd = 0;
+
     try {
       // Execute persistent frame callbacks
+      NoctermTimeline.startSync('Build');
       for (final callback in List<FrameCallback>.of(_persistentCallbacks)) {
         _invokeFrameCallback(callback, _currentFrameTimeStamp!);
       }
+      NoctermTimeline.finishSync(); // Build
+      buildEnd = DateTime.now().microsecondsSinceEpoch;
+
+      // TODO: Add explicit layout and paint phases when rendering system is implemented
+      // For now, treat persistent callbacks as combined build+layout+paint
+      layoutEnd = buildEnd;
+      paintEnd = buildEnd;
 
       // Phase 4: Post-frame callbacks
       _schedulerPhase = SchedulerPhase.postFrameCallbacks;
@@ -342,6 +428,24 @@ mixin SchedulerBinding on NoctermBinding {
         _invokeFrameCallback(callback, _currentFrameTimeStamp!);
       }
     } finally {
+      NoctermTimeline.finishSync(); // Frame
+
+      final frameEnd = DateTime.now();
+
+      // Report frame timing
+      if (_frameTimingCallbacks.isNotEmpty) {
+        final timing = FrameTiming(
+          frameNumber: _frameNumber,
+          buildDuration: Duration(microseconds: buildEnd - frameStart.microsecondsSinceEpoch),
+          layoutDuration: Duration(microseconds: layoutEnd - buildEnd),
+          paintDuration: Duration(microseconds: paintEnd - layoutEnd),
+          compositingDuration: Duration.zero, // Tracked separately in TerminalBinding
+          totalDuration: frameEnd.difference(frameStart),
+          timestamp: frameStart,
+        );
+        _reportFrameTiming(timing);
+      }
+
       // Return to idle
       _schedulerPhase = SchedulerPhase.idle;
       _currentFrameTimeStamp = null;

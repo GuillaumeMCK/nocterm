@@ -34,6 +34,7 @@ export 'src/components/divider.dart';
 export 'src/process/pty_controller.dart';
 export 'src/components/stack.dart';
 export 'src/components/render_stack.dart' show Stack;
+export 'src/components/performance_overlay.dart';
 
 // Navigation
 export 'src/navigation/navigator.dart';
@@ -59,6 +60,9 @@ export 'src/utils/clipboard.dart';
 export 'src/utils/log_server.dart';
 export 'src/utils/logger.dart';
 export 'src/utils/nocterm_paths.dart';
+
+// Performance and Debugging
+export 'src/foundation/performance.dart';
 
 // Widgets
 export 'src/widgets/nocterm_app.dart';
